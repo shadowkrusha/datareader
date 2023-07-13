@@ -21,6 +21,8 @@ import (
 	"text/template"
 
 	"github.com/shadowkrusha/datareader"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 const (
@@ -30,92 +32,92 @@ const (
 package main
 
 import (
-	"fmt"
-	"io"
-	"log"
-	"os"
+        "fmt"
+        "io"
+        "log"
+        "os"
 
-	"github.com/shadowkrusha/datareader"
-	"{{ .Importpath}}/{{ .Pkgname }}"
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
+        "github.com/shadowkrusha/datareader"
+        "{{ .Importpath}}/{{ .Pkgname }}"
+        "github.com/xitongsys/parquet-go-source/local"
+        "github.com/xitongsys/parquet-go/parquet"
+        "github.com/xitongsys/parquet-go/writer"
 )
 
 func main() {
 
-	sasfile := "{{ .SASfile }}"
+        sasfile := "{{ .SASfile }}"
 
-	rdr, err := os.Open(sasfile)
-	if err != nil {
-		panic(err)
-	}
-	defer rdr.Close()
+        rdr, err := os.Open(sasfile)
+        if err != nil {
+                panic(err)
+        }
+        defer rdr.Close()
 
-	sas, err := datareader.NewSAS7BDATReader(rdr)
-	if err != nil {
-		panic(err)
-	}
+        sas, err := datareader.NewSAS7BDATReader(rdr)
+        if err != nil {
+                panic(err)
+        }
 
-	fw, err := local.NewLocalFileWriter("{{ .Outfile }}")
-	if err != nil {
-		log.Println("Can't create local file", err)
-		return
-	}
+        fw, err := local.NewLocalFileWriter("{{ .Outfile }}")
+        if err != nil {
+                log.Println("Can't create local file", err)
+                return
+        }
 
-	pw, err := writer.NewParquetWriter(fw, new({{ .Pkgname }}.{{ .Structname }}), 4)
-	if err != nil {
-		log.Println("Can't create parquet writer", err)
-		return
-	}
+        pw, err := writer.NewParquetWriter(fw, new({{ .Pkgname }}.{{ .Structname }}), 4)
+        if err != nil {
+                log.Println("Can't create parquet writer", err)
+                return
+        }
 
-	pw.RowGroupSize = 128 * 1024 * 1024 //128M
-	pw.PageSize = 8 * 1024
-	pw.CompressionType = parquet.CompressionCodec_GZIP
-	chunksize := 1024 * 1024
-	ntot := 0
-	for chunk := 0; ; chunk++ {
+        pw.RowGroupSize = 128 * 1024 * 1024 //128M
+        pw.PageSize = 8 * 1024
+        pw.CompressionType = parquet.CompressionCodec_GZIP
+        chunksize := 1024 * 1024
+        ntot := 0
+        for chunk := 0; ; chunk++ {
 
-		dat, err := sas.Read(chunksize)
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			panic(err)
-		}
-		nrow := dat[0].Length()
-		ntot += nrow
-		fmt.Printf("Read %d records, %d total\n", nrow, ntot)
+                dat, err := sas.Read(chunksize)
+                if err == io.EOF {
+                        break
+                } else if err != nil {
+                        panic(err)
+                }
+                nrow := dat[0].Length()
+                ntot += nrow
+                fmt.Printf("Read %d records, %d total\n", nrow, ntot)
 
-		vx := 0
-		{{ range .VarBlocks }}
-	  	    {{ .Name }}, _, err := dat[vx].As{{ .Type }}Slice()
-		    if err != nil {
-			    panic(err)
-		    }
-		    vx++
-		{{ end }}
+                vx := 0
+                {{ range .VarBlocks }}
+                    {{ .Name }}, _, err := dat[vx].As{{ .Type }}Slice()
+                    if err != nil {
+                            panic(err)
+                    }
+                    vx++
+                {{ end }}
 
-		for i := 0; i < nrow; i++ {
+                for i := 0; i < nrow; i++ {
 
-			rec := {{.Pkgname }}.{{ .Structname }} {
-			    {{- range .VarBlocks }}
-				    {{ .Name }}: {{ .Name }}[i],
-				{{- end }}
-			}
+                        rec := {{.Pkgname }}.{{ .Structname }} {
+                            {{- range .VarBlocks }}
+                                    {{ .Name }}: {{ .Name }}[i],
+                                {{- end }}
+                        }
 
-			if err = pw.Write(rec); err != nil {
-				log.Println("{{ .SASfile }} write error", err)
-			}
-		}
-	}
+                        if err = pw.Write(rec); err != nil {
+                                log.Println("{{ .SASfile }} write error", err)
+                        }
+                }
+        }
 
-	if err = pw.WriteStop(); err != nil {
-		log.Println("{{ .SASfile }} WriteStop error", err)
-		return
-	}
+        if err = pw.WriteStop(); err != nil {
+                log.Println("{{ .SASfile }} WriteStop error", err)
+                return
+        }
 
-	log.Println("{{ .SASfile }} finished")
-	fw.Close()
+        log.Println("{{ .SASfile }} finished")
+        fw.Close()
 }
 `
 )
@@ -137,16 +139,19 @@ func writeSchema(cnames []string, ctypes []datareader.ColumnTypeT, pkgname, stru
 	for i := range cnames {
 
 		// The go version of the variable name must be exported
-		gname := strings.Title(cnames[i])
+		caser := cases.Title(language.BritishEnglish)
+		cname := strings.Replace(caser.String(cnames[i]), "@", "_", -1)
+		cname = strings.Replace(caser.String(cname), "-", "_minus_", -1)
+		cname = strings.Replace(caser.String(cname), "+", "_plus_", -1)
 
 		switch ctypes[i] {
 		case datareader.SASNumericType:
-			s = fmt.Sprintf("    %s float64 `parquet:\"name=%s,type=DOUBLE\"`\n", gname, cnames[i])
+			s = fmt.Sprintf("    %s float64 `parquet:\"name=%s,type=DOUBLE\"`\n", cname, cname)
 			if _, err := io.WriteString(&buf, s); err != nil {
 				panic(err)
 			}
 		case datareader.SASStringType:
-			s = fmt.Sprintf("    %s string `parquet:\"name=%s,type=BYTE_ARRAY\"`\n", gname, cnames[i])
+			s = fmt.Sprintf("    %s string `parquet:\"name=%s,type=BYTE_ARRAY\"`\n", cname, cname)
 			if _, err := io.WriteString(&buf, s); err != nil {
 				panic(err)
 			}
@@ -162,8 +167,10 @@ func writeSchema(cnames []string, ctypes []datareader.ColumnTypeT, pkgname, stru
 	// Format the source
 	var p []byte
 	var err error
+	// fmt.Println(buf.String())
 	p, err = format.Source(buf.Bytes())
 	if err != nil {
+		// fmt.Println(buf.String())
 		panic(err)
 	}
 
@@ -183,9 +190,9 @@ func writeSchema(cnames []string, ctypes []datareader.ColumnTypeT, pkgname, stru
 	defer out.Close()
 }
 
-func printUsage() {
-	panic("!!!\n")
-}
+// func printUsage() {
+// 	panic("!!!\n")
+// }
 
 func getImportPath() string {
 
@@ -209,15 +216,23 @@ func getImportPath() string {
 func writeCode(cnames []string, ctypes []datareader.ColumnTypeT, pkgname, structname, sasfile,
 	outdir, scriptname, outname string) {
 
+	for i := range cnames {
+		cnames[i] = strings.Replace(cnames[i], "@", "_", -1)
+		cnames[i] = strings.Replace(cnames[i], "-", "_minus_", -1)
+		cnames[i] = strings.Replace(cnames[i], "+", "_plus_", -1)
+	}
+
 	type vart struct {
 		Name string
 		Type string
 	}
 
+	caser := cases.Title(language.BritishEnglish)
+
 	var vt []*vart
 	for i := range cnames {
 		x := &vart{
-			Name: cnames[i],
+			Name: caser.String(cnames[i]),
 		}
 		switch ctypes[i] {
 		case datareader.SASNumericType:
